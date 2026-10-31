@@ -12,9 +12,12 @@ interface Miss {
 export function ScanView({
   catalog,
   onSelect,
+  paused = false,
 }: {
   catalog: Catalog
   onSelect: (articulo: Articulo, match: ScanMatch) => void
+  /** True while the article sheet covers the viewfinder. */
+  paused?: boolean
 }) {
   const [miss, setMiss] = useState<Miss | null>(null)
   const [manual, setManual] = useState('')
@@ -36,7 +39,10 @@ export function ScanView({
   )
 
   // useScanner releases the camera on unmount, so nothing to clean up here.
-  const { videoRef, state, engine, error, torch, start, stop } = useScanner({ onScan: resolve })
+  const { videoRef, state, engine, error, torch, start, stop } = useScanner({
+    onScan: resolve,
+    paused,
+  })
 
   const submitManual = (event: React.FormEvent) => {
     event.preventDefault()

@@ -50,6 +50,8 @@ export default function App() {
     if (next.length > 0) setTab('buscar')
   }, [])
 
+  const closeSelection = useCallback(() => setSelection(null), [])
+
   return (
     <div className="flex h-full flex-col bg-shell">
       <header className="pt-safe bg-panel px-4 pb-2">
@@ -68,6 +70,7 @@ export default function App() {
       ) : tab === 'escanear' ? (
         <ScanView
           catalog={catalog}
+          paused={selection !== null}
           onSelect={(articulo, match) => setSelection({ articulo, match })}
         />
       ) : (
@@ -81,7 +84,7 @@ export default function App() {
           articulo={selection.articulo}
           matchedKey={selection.match?.matchedKey}
           derived={selection.match?.derived}
-          onClose={() => setSelection(null)}
+          onClose={closeSelection}
         />
       )}
     </div>

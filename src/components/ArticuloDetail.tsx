@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import type { Articulo } from '../types'
 import { formatGtin } from '../lib/ean'
 import { formatNumber, formatPercent, formatPrice } from '../lib/format'
@@ -29,13 +29,40 @@ export function ArticuloDetail({
   derived?: boolean
   onClose: () => void
 }) {
+  const onCloseRef = useRef(onClose)
+  useEffect(() => {
+    onCloseRef.current = onClose
+  }, [onClose])
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
+      if (event.key === 'Escape') onCloseRef.current()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [])
+
+  // Android's back gesture should close the sheet, not leave the app. The
+  // sheet gets its own history entry; going back pops it and closes the
+  // sheet, and closing it any other way removes the entry again.
+  useEffect(() => {
+    history.pushState({ articuloSheet: true }, '')
+    let popped = false
+    const onPop = (event: PopStateEvent) => {
+      // Landing on another sheet entry (React StrictMode re-mount in dev)
+      // is not a request to close.
+      if ((event.state as { articuloSheet?: boolean } | null)?.articuloSheet) return
+      popped = true
+      onCloseRef.current()
+    }
+    window.addEventListener('popstate', onPop)
+    return () => {
+      window.removeEventListener('popstate', onPop)
+      if (!popped && (history.state as { articuloSheet?: boolean } | null)?.articuloSheet) {
+        history.back()
+      }
+    }
+  }, [])
 
   const precioSinIva =
     articulo.precio !== null && articulo.iva ? articulo.precio / (1 + articulo.iva / 100) : null

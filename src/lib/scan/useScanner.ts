@@ -16,6 +16,11 @@ interface Options {
    * costs a few milliseconds and removes most misreads on a blurry frame.
    */
   confirmations?: number
+  /**
+   * Keep the camera open but stop reading frames, e.g. while the article
+   * sheet is on top of the viewfinder.
+   */
+  paused?: boolean
 }
 
 interface TorchControl {
@@ -34,7 +39,12 @@ const INTERVAL: Record<ScanEngine, number> = { native: 80, zxing: 160 }
  * leaving a track live keeps the phone's camera indicator on and drains the
  * battery of a device that is meant to last a shift.
  */
-export function useScanner({ onScan, cooldownMs = 2000, confirmations = 2 }: Options) {
+export function useScanner({
+  onScan,
+  cooldownMs = 2000,
+  confirmations = 2,
+  paused = false,
+}: Options) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const scannerRef = useRef<BarcodeScanner | null>(null)
@@ -42,6 +52,14 @@ export function useScanner({ onScan, cooldownMs = 2000, confirmations = 2 }: Opt
   const pendingRef = useRef<{ value: string; count: number } | null>(null)
   const lastAcceptedRef = useRef<{ value: string; at: number } | null>(null)
   const onScanRef = useRef(onScan)
+  const pausedRef = useRef(paused)
+  /**
+   * Bumped by every start() and stop(). An await inside start() that
+   * resolves after the session changed (tab switched while the permission
+   * prompt was open, component unmounted...) must not keep the camera.
+   */
+  const sessionRef = useRef(0)
+  const resumeOnVisibleRef = useRef(false)
 
   const [state, setState] = useState<ScannerState>('idle')
   const [engine, setEngine] = useState<ScanEngine | null>(null)
@@ -55,7 +73,18 @@ export function useScanner({ onScan, cooldownMs = 2000, confirmations = 2 }: Opt
     onScanRef.current = onScan
   }, [onScan])
 
+  useEffect(() => {
+    pausedRef.current = paused
+    if (!paused) {
+      // Coming back from the article sheet with the same product still in
+      // front of the camera should not reopen it straight away.
+      pendingRef.current = null
+      if (lastAcceptedRef.current) lastAcceptedRef.current.at = Date.now()
+    }
+  }, [paused])
+
   const stop = useCallback(() => {
+    sessionRef.current += 1
     if (timerRef.current !== null) {
       window.clearTimeout(timerRef.current)
       timerRef.current = null
@@ -95,6 +124,8 @@ export function useScanner({ onScan, cooldownMs = 2000, confirmations = 2 }: Opt
 
   const start = useCallback(async () => {
     if (state === 'starting' || state === 'running') return
+    const session = ++sessionRef.current
+    const isStale = () => session !== sessionRef.current
     setState('starting')
     setError(null)
 
@@ -113,6 +144,10 @@ export function useScanner({ onScan, cooldownMs = 2000, confirmations = 2 }: Opt
         },
         audio: false,
       })
+      if (isStale()) {
+        stream.getTracks().forEach((track) => track.stop())
+        return
+      }
       streamRef.current = stream
 
       const video = videoRef.current
@@ -122,12 +157,17 @@ export function useScanner({ onScan, cooldownMs = 2000, confirmations = 2 }: Opt
       video.muted = true
       video.setAttribute('playsinline', 'true')
       await video.play()
+      if (isStale()) return // stop() already released the stream
 
       const track = stream.getVideoTracks()[0]
       const capabilities = track?.getCapabilities?.()
       setTorch({ supported: Boolean(capabilities?.torch), on: false })
 
       const scanner = await createScanner()
+      if (isStale()) {
+        scanner.dispose()
+        return
+      }
       scannerRef.current = scanner
       setEngine(scanner.engine)
       setState('running')
@@ -137,7 +177,9 @@ export function useScanner({ onScan, cooldownMs = 2000, confirmations = 2 }: Opt
         const element = videoRef.current
         if (!current || !element) return
         try {
-          for (const value of await current.detect(element)) accept(value)
+          if (!pausedRef.current) {
+            for (const value of await current.detect(element)) accept(value)
+          }
         } catch {
           // Keep the loop alive; a single bad frame is not worth stopping for.
         }
@@ -147,6 +189,9 @@ export function useScanner({ onScan, cooldownMs = 2000, confirmations = 2 }: Opt
       }
       void tick()
     } catch (cause) {
+      // play() rejects with AbortError when stop() clears the video mid-start;
+      // that is a cancellation, not something to show the user.
+      if (isStale()) return
       const message =
         cause instanceof DOMException && cause.name === 'NotAllowedError'
           ? 'Permiso de cámara denegado. Habilítalo en los ajustes del navegador.'
@@ -174,6 +219,31 @@ export function useScanner({ onScan, cooldownMs = 2000, confirmations = 2 }: Opt
   }, [torch.on])
 
   useEffect(() => stop, [stop])
+
+  // Release the camera while the app is in the background (switching to
+  // WhatsApp, locking the phone) and reopen it on return.
+  const startRef = useRef(start)
+  useEffect(() => {
+    startRef.current = start
+  }, [start])
+  const stateRef = useRef(state)
+  useEffect(() => {
+    stateRef.current = state
+  }, [state])
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.hidden) {
+        resumeOnVisibleRef.current =
+          stateRef.current === 'running' || stateRef.current === 'starting'
+        if (resumeOnVisibleRef.current) stop()
+      } else if (resumeOnVisibleRef.current) {
+        resumeOnVisibleRef.current = false
+        void startRef.current()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [stop])
 
   const torchControl: TorchControl = { ...torch, toggle: toggleTorch }
   return { videoRef, state, engine, error, torch: torchControl, start, stop }
