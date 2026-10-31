@@ -5,6 +5,9 @@ import { VitePWA } from 'vite-plugin-pwa'
 
 // https://vite.dev/config/
 export default defineConfig({
+  // Relative paths: works at https://weijzzz.github.io/jiaohuo/ as well as
+  // at a domain root.
+  base: './',
   plugins: [
     react(),
     tailwindcss(),
@@ -16,7 +19,8 @@ export default defineConfig({
         short_name: 'Jiaohuo',
         description: 'Consulta de precios por EAN o código de artículo, sin conexión.',
         lang: 'es',
-        start_url: '/',
+        start_url: '.',
+        scope: '.',
         display: 'standalone',
         background_color: '#0b1120',
         theme_color: '#0b1120',
