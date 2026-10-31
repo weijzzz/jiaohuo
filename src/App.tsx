@@ -1,122 +1,92 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { Articulo, SnapshotMeta } from './types'
+import { buildCatalog, EMPTY_CATALOG, type ScanMatch } from './lib/catalog'
+import { loadSnapshot } from './lib/db'
+import { ArticuloDetail } from './components/ArticuloDetail'
+import { ImportView } from './components/ImportView'
+import { ScanView } from './components/ScanView'
+import { SearchView } from './components/SearchView'
+import { SnapshotBanner } from './components/SnapshotBanner'
+import { TabBar, type Tab } from './components/TabBar'
 
-function App() {
-  const [count, setCount] = useState(0)
-
-  return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+interface Selection {
+  articulo: Articulo
+  match?: ScanMatch
 }
 
-export default App
+export default function App() {
+  const [tab, setTab] = useState<Tab>('buscar')
+  const [articulos, setArticulos] = useState<Articulo[]>([])
+  const [meta, setMeta] = useState<SnapshotMeta | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [selection, setSelection] = useState<Selection | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    void loadSnapshot()
+      .then((snapshot) => {
+        if (cancelled) return
+        setArticulos(snapshot.articulos)
+        setMeta(snapshot.meta)
+        // Land on the import screen when there is nothing to search yet.
+        if (snapshot.articulos.length === 0) setTab('datos')
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const catalog = useMemo(
+    () => (articulos.length === 0 ? EMPTY_CATALOG : buildCatalog(articulos)),
+    [articulos],
+  )
+
+  const onLoaded = useCallback((next: Articulo[], nextMeta: SnapshotMeta | null) => {
+    setArticulos(next)
+    setMeta(nextMeta)
+    if (next.length > 0) setTab('buscar')
+  }, [])
+
+  const closeSelection = useCallback(() => setSelection(null), [])
+
+  return (
+    <div className="flex h-full flex-col bg-shell">
+      <header className="pt-safe bg-panel px-4 pb-2">
+        <h1 className="text-base font-semibold text-slate-100">Consulta de artículos</h1>
+      </header>
+
+      <SnapshotBanner meta={meta} onImport={() => setTab('datos')} />
+
+      {loading ? (
+        <p className="flex-1 px-4 py-10 text-center text-sm text-slate-400">Cargando catálogo…</p>
+      ) : tab === 'buscar' ? (
+        <SearchView
+          catalog={catalog}
+          onSelect={(articulo) => setSelection({ articulo })}
+        />
+      ) : tab === 'escanear' ? (
+        <ScanView
+          catalog={catalog}
+          paused={selection !== null}
+          onSelect={(articulo, match) => setSelection({ articulo, match })}
+        />
+      ) : (
+        <ImportView meta={meta} onLoaded={onLoaded} />
+      )}
+
+      <TabBar value={tab} onChange={setTab} />
+
+      {selection && (
+        <ArticuloDetail
+          articulo={selection.articulo}
+          matchedKey={selection.match?.matchedKey}
+          derived={selection.match?.derived}
+          onClose={closeSelection}
+        />
+      )}
+    </div>
+  )
+}
